@@ -2,6 +2,7 @@
 Create & download a certificate bundle for a new AWS IoT Thing.
 """
 
+import argparse
 import logging
 import random
 import os
@@ -9,6 +10,19 @@ import time
 
 import boto3
 import requests
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Create & download a certificate bundle for a new AWS IoT Thing.")
+    parser.add_argument(
+        '--output',
+        type=str,
+        required=False,
+        help="The path to a directory in which to save output files. Default: current directory",
+        dest="output_dir",
+        default=os.curdir,
+    )
+    return parser.parse_args()
 
 
 def request_keys_and_certificate(
@@ -26,24 +40,20 @@ def request_keys_and_certificate(
     while True:
         try:
             return client.create_keys_and_certificate(setAsActive=True)
-        except (
-            client.exceptions.ThrottlingException,
-            client.exceptions.ServiceUnavailableException,
-        ):
+        except client.exceptions.ThrottlingException:
             # if being throttled, retry with exponential backoff
-            if isinstance(client.exceptions.ThrottlingException):
-                logging.warning("Request is being throttled!")
-                if request_tries == retries - 1:
-                    raise
-                sleep = backoff_in_seconds * 2**request_tries + random.uniform(
-                    0, 1
-                )
-                logging.info("Retrying in %d seconds...", sleep)
-                time.sleep(sleep)
-                request_tries += 1
-            else:
-                logging.fatal("IoT Service unavailable!")
+            logging.warning("Request is being throttled!")
+            if request_tries == retries - 1:
                 raise
+            sleep = backoff_in_seconds * 2**request_tries + random.uniform(
+                0, 1
+            )
+            logging.info("Retrying in %d seconds...", sleep)
+            time.sleep(sleep)
+            request_tries += 1
+        except client.exceptions.ServiceUnavailableException:
+            logging.fatal("IoT Service unavailable!")
+            raise
         except client.exceptions.UnauthorizedException as err:
             msg = f"Unauthorized: {str(err)}"
             logging.fatal(msg)
@@ -104,7 +114,7 @@ def get_root_ca(
         raise
 
 
-def download_certificate(certificate_str: str, path: str = os.curdir) -> None:
+def download_certificate(certificate_str: str, path: str) -> None:
     """
     Download the certificate PEM to a local file
 
@@ -116,7 +126,7 @@ def download_certificate(certificate_str: str, path: str = os.curdir) -> None:
         cert_file.write(certificate_str)
 
 
-def download_private_key(private_key_str: str, path: str = os.curdir) -> None:
+def download_private_key(private_key_str: str, path: str) -> None:
     """
     Download the private key to a local file
 
@@ -128,7 +138,7 @@ def download_private_key(private_key_str: str, path: str = os.curdir) -> None:
         private_key_file.write(private_key_str)
 
 
-def download_public_key(public_key_str: str, path: str = os.curdir) -> None:
+def download_public_key(public_key_str: str, path: str) -> None:
     """
     Download the public key to a local file
 
@@ -140,7 +150,7 @@ def download_public_key(public_key_str: str, path: str = os.curdir) -> None:
         public_key_file.write(public_key_str)
 
 
-def download_root_ca(root_ca_str: bytes, path: str = os.curdir) -> None:
+def download_root_ca(root_ca_str: bytes, path: str) -> None:
     """
     Download the root CA PEM to a local file
 
@@ -148,14 +158,15 @@ def download_root_ca(root_ca_str: bytes, path: str = os.curdir) -> None:
     :param path: a path to save the root CA file
     :return: None
     """
-    with open(f"{path}/root_ca.cer", "wb", encoding="utf-8") as root_ca_file:
+    with open(f"{path}/root_ca.cer", "wb") as root_ca_file:
         root_ca_file.write(root_ca_str)
 
 
 if __name__ == "__main__":
+    args = parse_args()
     iot = boto3.client("iot")
     cert_bundle = request_keys_and_certificate(iot)
-    download_certificate(get_certificate(cert_bundle))
-    download_public_key(get_public_key(cert_bundle))
-    download_private_key(get_private_key(cert_bundle))
-    download_root_ca(get_root_ca())
+    download_certificate(get_certificate(cert_bundle), args.output_dir)
+    download_public_key(get_public_key(cert_bundle), args.output_dir)
+    download_private_key(get_private_key(cert_bundle), args.output_dir)
+    download_root_ca(get_root_ca(), args.output_dir)
